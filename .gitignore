@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+# Never commit secrets: the GM token lives here, wrangler-secret style.
+.secrets.local
+# The per-campaign transcripts. They are the DM's session logs, not source.
+data/*.jsonl
