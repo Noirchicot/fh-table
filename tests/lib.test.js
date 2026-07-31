@@ -11,6 +11,11 @@ import {
   isAllowedOrigin,
   timingSafeEqual,
   makeRateLimiter,
+  cleanPseudo,
+  defaultCharacterProfile,
+  safeOpaque,
+  applyProfilePatch,
+  applyBuildWrite,
 } from "../lib.mjs";
 
 test("a valid roll survives with its actor and display intact", () => {
@@ -160,4 +165,110 @@ test("the rate limiter resets in a new window", () => {
   assert.equal(limited("1.2.3.4"), true);
   now = 61_000;
   assert.equal(limited("1.2.3.4"), false); // new window, fresh budget
+});
+
+// ---------- character ownership (plan §13.13) ----------
+
+test("cleanPseudo accepts a normal name and strips surrounding whitespace", () => {
+  assert.equal(cleanPseudo("  Nodren  "), "Nodren");
+  assert.equal(cleanPseudo("Ael'Thoryn".replace("'", "")), "AelThoryn");
+});
+
+test("cleanPseudo rejects path-traversal and separator characters", () => {
+  assert.equal(cleanPseudo("../../etc/passwd"), null);
+  assert.equal(cleanPseudo("a/b"), null);
+  assert.equal(cleanPseudo(".."), null);
+  assert.equal(cleanPseudo(""), null);
+  assert.equal(cleanPseudo(null), null);
+  assert.equal(cleanPseudo("x".repeat(41)), null); // over the 40-char cap
+});
+
+test("defaultCharacterProfile starts at revision 0 with empty collections", () => {
+  const profile = defaultCharacterProfile(() => 1_700_000_000_000);
+  assert.equal(profile.revision, 0);
+  assert.equal(profile.ddbLinked, false);
+  assert.deepEqual(profile.levelUps, []);
+  assert.deepEqual(profile.preparation, { transferEssence: false, identify: false, tools: [] });
+  assert.equal(profile.updatedAt, new Date(1_700_000_000_000).toISOString());
+});
+
+test("safeOpaque bounds an object by byte size and rejects the wrong JS type", () => {
+  assert.deepEqual(safeOpaque({ a: 1 }), { a: 1 });
+  assert.equal(safeOpaque({ blob: "x".repeat(9_000) }), null); // over the default 8000-byte cap
+  assert.equal(safeOpaque([1, 2, 3]), null); // an array is not an object here
+  assert.equal(safeOpaque(null), null);
+});
+
+test("safeOpaque bounds an array by item count and byte size", () => {
+  assert.deepEqual(safeOpaque([1, 2, 3], { array: true, maxItems: 2 }), [1, 2]);
+  assert.equal(safeOpaque("not an array", { array: true }).length, 0);
+  assert.deepEqual(safeOpaque([{ big: "x".repeat(100) }], { array: true, maxBytes: 10 }), []);
+});
+
+test("applyProfilePatch accepts a matching revision and bumps it", () => {
+  const profile = defaultCharacterProfile();
+  const result = applyProfilePatch(profile, { revision: 0, rollPrefs: { sound: "on" } });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.revision, 1);
+  assert.deepEqual(result.profile.rollPrefs, { sound: "on" });
+  assert.equal(result.profile.ddbLinked, false); // untouched fields survive
+});
+
+test("applyProfilePatch rejects a stale revision with 409 and the current record", () => {
+  const profile = { ...defaultCharacterProfile(), revision: 3 };
+  const result = applyProfilePatch(profile, { revision: 2, rollPrefs: { sound: "on" } });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error, "conflict");
+  assert.equal(result.body.currentRevision, 3);
+  assert.equal(result.body.current, profile);
+});
+
+test("applyProfilePatch treats a missing revision as 0", () => {
+  const profile = defaultCharacterProfile();
+  const result = applyProfilePatch(profile, { destinyState: { arcana: "The Tower" } });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.revision, 1);
+});
+
+test("applyProfilePatch with no recognized patch key is rejected", () => {
+  const result = applyProfilePatch(defaultCharacterProfile(), { revision: 0, notARealField: 1 });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+});
+
+test("applyProfilePatch ignores unrecognized keys alongside a real one", () => {
+  const result = applyProfilePatch(defaultCharacterProfile(), { revision: 0, rollPrefs: { a: 1 }, notARealField: 1 });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.notARealField, undefined);
+});
+
+test("applyBuildWrite accepts a brand-new character at revision 0", () => {
+  const result = applyBuildWrite(null, "Nodren", { campaign: "FH2", revision: 0, build: { level: 1 } });
+  assert.equal(result.ok, true);
+  assert.equal(result.record.revision, 1);
+  assert.equal(result.record.pseudo, "Nodren");
+  assert.deepEqual(result.record.build, { level: 1 });
+});
+
+test("applyBuildWrite rejects a stale revision with 409 and the current record", () => {
+  const existing = { pseudo: "Nodren", campaign: "FH2", updatedAt: "t", revision: 2, build: { level: 2 } };
+  const result = applyBuildWrite(existing, "Nodren", { campaign: "FH2", revision: 1, build: { level: 3 } });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.currentRevision, 2);
+  assert.equal(result.body.current, existing);
+});
+
+test("applyBuildWrite refuses a build over the 200,000-char cap", () => {
+  const huge = { blob: "x".repeat(200_001) };
+  const result = applyBuildWrite(null, "Nodren", { campaign: "FH2", revision: 0, build: huge });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 413);
+});
+
+test("applyBuildWrite requires a build", () => {
+  const result = applyBuildWrite(null, "Nodren", { campaign: "FH2", revision: 0 });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
 });

@@ -126,3 +126,138 @@ export const makeRateLimiter = (limit = 90, windowMs = 60_000, clock = Date.now)
     return used > limit;
   };
 };
+
+// ---------- character ownership (plan §13.13) ----------
+// Pure logic only, same reason as the rest of this file: unit-testable
+// without a server, an archive directory, or a network call.
+
+export const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+
+// A pseudo becomes a JSON filename ({pseudo}.json) and an HTTP path segment,
+// so it needs the Worker's *stricter* charset (mirrors fh-worker/src/worker.js
+// `clean`, ~lines 67-68) rather than the freer `clean` above — anything
+// outside [letter, number, space, _, -] must never reach path.join, or a
+// pseudo like "../../etc" becomes a path-traversal bug instead of a rejected
+// request.
+export const cleanPseudo = (s) =>
+  typeof s === "string" && /^[\p{L}\p{N} _-]{1,40}$/u.test(s.trim()) ? s.trim() : null;
+
+// Mirrors fh-worker/src/worker.js defaultCharacterProfile + publicCharacterProfile
+// (~lines 847-899) collapsed into one shape: the table server only ever stores
+// and serves the public form, never the Worker-internal `ddb.linkedAt` wrapper
+// — nothing on this server's routes needs it (the DDB pull route is not part
+// of plan §13.13's scope here; see the build plan).
+export const defaultCharacterProfile = (clock = Date.now) => ({
+  schemaVersion: 1,
+  ddbLinked: false,
+  characterId: null,
+  snapshot: null,
+  preparation: { transferEssence: false, identify: false, tools: [] },
+  levelUps: [],
+  destinyState: null,
+  vitalsState: null,
+  rollHistory: [],
+  rollEvents: [],
+  rollPrefs: null,
+  manualOverrides: null,
+  pendingRoll: null,
+  revision: 0,
+  updatedAt: new Date(clock()).toISOString(),
+});
+
+// Verbatim port of fh-worker/src/worker.js safeOpaque (~lines 833-845): bounds
+// shape and byte size only, no domain knowledge. Deliberately NOT extended to
+// match safePreparation/safeLevelUps (~lines 800-827) too, which lean on
+// ABILITIES/ESSENTIAL_SKILLS — game-content lists that belong to the Worker.
+// Duplicating those here would be a second copy that silently drifts the day
+// either list changes there. A well-formed patch (the only kind the dock ever
+// sends) is untouched by that gap; a malformed one is still bounded by the
+// caps below, and gets the Worker's own stricter shape check for free the
+// moment it mirrors there.
+export const safeOpaque = (value, { array = false, maxBytes = 8_000, maxItems = 50 } = {}) => {
+  const fits = (x) => {
+    try {
+      return JSON.stringify(x).length <= maxBytes;
+    } catch {
+      return false;
+    }
+  };
+  if (array) {
+    if (!Array.isArray(value)) return [];
+    const list = value.slice(0, maxItems);
+    return fits(list) ? list : [];
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return fits(value) ? value : null;
+};
+
+// Same nine keys and the same per-key budgets as fh-worker's
+// POST /profile/:code/:pseudo (~lines 1162-1177). `preparation` and
+// `levelUps` get the generic bound only — see safeOpaque's comment above.
+const PROFILE_PATCH = {
+  preparation: (v) => safeOpaque(v, { maxBytes: 2_000 }),
+  levelUps: (v) => safeOpaque(v, { array: true, maxItems: 20, maxBytes: 20_000 }),
+  destinyState: (v) => safeOpaque(v),
+  vitalsState: (v) => safeOpaque(v, { maxBytes: 1_000 }),
+  rollHistory: (v) => safeOpaque(v, { array: true, maxItems: 20, maxBytes: 40_000 }),
+  rollEvents: (v) => safeOpaque(v, { array: true, maxItems: 10, maxBytes: 8_000 }),
+  rollPrefs: (v) => safeOpaque(v, { maxBytes: 4_000 }),
+  manualOverrides: (v) => safeOpaque(v, { maxBytes: 8_000 }),
+  pendingRoll: (v) => safeOpaque(v, { maxBytes: 8_000 }),
+};
+
+// The plan §13.13.2 rule, applied to a profile patch: a write must name the
+// revision it is based on (absent is treated as 0); it is accepted only if
+// that matches the record's current revision, which is then stamped +1.
+// Anything else is a 409 carrying the record as it actually stands right
+// now — never a silent overwrite, never a silently dropped write. Pure: the
+// caller owns loading `profile` and persisting the result.
+export const applyProfilePatch = (profile, body, clock = Date.now) => {
+  const applied = Object.keys(PROFILE_PATCH).filter((key) => hasOwn(body, key));
+  if (!applied.length) return { ok: false, status: 400, body: { error: "nothing to update" } };
+  const currentRevision = Number.isSafeInteger(profile?.revision) ? profile.revision : 0;
+  const suppliedRevision = clampInt(body.revision, 0, 1_000_000_000, 0);
+  if (suppliedRevision !== currentRevision) {
+    return { ok: false, status: 409, body: { error: "conflict", currentRevision, current: profile } };
+  }
+  const next = { ...profile };
+  applied.forEach((key) => {
+    next[key] = PROFILE_PATCH[key](body[key]);
+  });
+  next.revision = currentRevision + 1;
+  next.updatedAt = new Date(clock()).toISOString();
+  return { ok: true, profile: next };
+};
+
+// Matches fh-worker's POST /builds cap (~line 1091): the build blob itself,
+// not the whole request body, is capped at 200,000 JSON characters.
+const MAX_BUILD_CHARS = 200_000;
+
+// The plan §13.13.2 rule again, for the build record instead of the profile.
+// `existing` is the full stored record ({pseudo, campaign, updatedAt,
+// revision, build}) or null for a pseudo this archive has never seen — which
+// naturally makes revision 0 the only accepted value for a brand-new
+// character, exactly as it does on the Worker.
+export const applyBuildWrite = (existing, pseudo, body, clock = Date.now) => {
+  if (!body?.build) return { ok: false, status: 400, body: { error: "pseudo and build are required" } };
+  let buildLength;
+  try {
+    buildLength = JSON.stringify(body.build).length;
+  } catch {
+    return { ok: false, status: 400, body: { error: "invalid build" } };
+  }
+  if (buildLength > MAX_BUILD_CHARS) return { ok: false, status: 413, body: { error: "build too large" } };
+  const currentRevision = Number.isSafeInteger(existing?.revision) ? existing.revision : 0;
+  const suppliedRevision = clampInt(body.revision, 0, 1_000_000_000, 0);
+  if (suppliedRevision !== currentRevision) {
+    return { ok: false, status: 409, body: { error: "conflict", currentRevision, current: existing } };
+  }
+  const record = {
+    pseudo,
+    campaign: body.campaign,
+    updatedAt: new Date(clock()).toISOString(),
+    revision: currentRevision + 1,
+    build: body.build,
+  };
+  return { ok: true, record };
+};
