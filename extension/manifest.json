@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Fate's Hand — AboveVTT Bridge",
+  "version": "0.1.0",
+  "description": "Posts resolved Fate's Hand campaign events into the DM's AboveVTT game log.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://www.dndbeyond.com/campaigns/*",
+    "https://www.dndbeyond.com/characters*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Fate's Hand AboveVTT Bridge",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.dndbeyond.com/campaigns/*",
+        "https://www.dndbeyond.com/characters*"
+      ],
+      "exclude_matches": ["https://www.dndbeyond.com/campaigns/join/*"],
+      "js": ["content.js"],
+      "css": ["status.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

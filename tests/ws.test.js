@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { isAllowedOrigin } from "../lib.mjs";
 import { acceptKey, encodeFrame, decodeFrames, handshakeResponse, OPCODE, WS_GUID } from "../ws.mjs";
 
 // Masks a payload the way a browser client does, so decodeFrames is tested
@@ -139,9 +140,24 @@ test("the dock's own origin completes the handshake", () => {
   assert.match(res.headers, /s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=/);
 });
 
+test("a Chrome extension service worker completes the real origin-gated handshake", () => {
+  const res = handshakeResponse(
+    {
+      headers: {
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+        origin: `chrome-extension://${"a".repeat(32)}`,
+      },
+    },
+    isAllowedOrigin,
+  );
+  assert.equal(res.ok, true);
+  assert.match(res.headers, /101 Switching Protocols/);
+});
+
 test("a non-browser client sending no Origin is allowed through", () => {
-  // curl, the 12b bridge on loopback, the test harness — same trust model as
-  // the rest of the feed: the campaign code is the membership gate.
+  // curl and the Node test harness send no Origin. The browser extension has
+  // its chrome-extension:// origin checked explicitly by the test above.
   const res = handshakeResponse(
     { headers: { "sec-websocket-key": "abc", "sec-websocket-version": "13" } },
     () => false,

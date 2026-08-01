@@ -133,6 +133,8 @@ test("the dock's github.io origin is allowed, an unrelated origin is not", () =>
   assert.ok(isAllowedOrigin("https://noirchicot.github.io"));
   assert.ok(isAllowedOrigin("http://localhost:8080"));
   assert.ok(isAllowedOrigin("http://127.0.0.1:8131"));
+  assert.ok(isAllowedOrigin(`chrome-extension://${"a".repeat(32)}`));
+  assert.equal(isAllowedOrigin("chrome-extension://not-a-real-extension-id"), false);
   assert.equal(isAllowedOrigin("https://evil.example"), false);
   assert.equal(isAllowedOrigin(""), false);
 });

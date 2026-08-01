@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node table-server.mjs",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "bridge:harness": "node extension/dev-harness.mjs"
   }
 }
