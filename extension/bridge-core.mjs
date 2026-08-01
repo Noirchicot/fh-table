@@ -1,5 +1,21 @@
 const MAX_SEEN_IDS = 800;
 const MAX_ROLLS = 400;
+export const KEEPALIVE_MS = 20_000;
+
+// Chrome terminates an otherwise-idle Manifest V3 service worker after roughly
+// 30 seconds. A WebSocket connection alone is not enough: an application-level
+// message has to cross it inside that window. The table server deliberately
+// ignores client text frames, so this heartbeat has no feed semantics.
+export const startWebSocketKeepAlive = (
+  getSocket,
+  { setIntervalFn = setInterval, clearIntervalFn = clearInterval } = {},
+) => {
+  const timer = setIntervalFn(() => {
+    const current = getSocket();
+    if (current?.readyState === 1) current.send("keepalive");
+  }, KEEPALIVE_MS);
+  return () => clearIntervalFn(timer);
+};
 
 const text = (value, fallback = "") => {
   const out = typeof value === "string" ? value.trim() : value == null ? "" : String(value);

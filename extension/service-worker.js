@@ -1,4 +1,11 @@
-import { chooseAboveVttTab, cleanCampaignCode, emptyLedger, normalizeLedger, planEvent } from "./bridge-core.mjs";
+import {
+  chooseAboveVttTab,
+  cleanCampaignCode,
+  emptyLedger,
+  normalizeLedger,
+  planEvent,
+  startWebSocketKeepAlive,
+} from "./bridge-core.mjs";
 
 const STORAGE_KEY = "fhAboveVttBridge";
 const DDB_URLS = ["https://www.dndbeyond.com/campaigns/*", "https://www.dndbeyond.com/characters*"];
@@ -18,6 +25,17 @@ let retryTimer = null;
 let retryMs = 1_000;
 let deliveryChain = Promise.resolve();
 let intentionalClose = false;
+let stopKeepAlive = null;
+
+const endKeepAlive = () => {
+  if (stopKeepAlive) stopKeepAlive();
+  stopKeepAlive = null;
+};
+
+const beginKeepAlive = () => {
+  endKeepAlive();
+  stopKeepAlive = startWebSocketKeepAlive(() => socket);
+};
 
 const publicState = () => ({
   enabled: state.enabled,
@@ -109,6 +127,7 @@ const deliverToAboveVtt = async (plan) => {
 };
 
 const closeForRetry = (error) => {
+  endKeepAlive();
   if (socket) {
     const current = socket;
     socket = null;
@@ -172,6 +191,7 @@ function connect() {
   next.onopen = () => {
     if (socket !== next) return;
     retryMs = 1_000;
+    beginKeepAlive();
     setStatus("live", "");
   };
   next.onmessage = (message) => {
@@ -184,6 +204,7 @@ function connect() {
   };
   next.onclose = () => {
     if (socket !== next) return;
+    endKeepAlive();
     socket = null;
     if (!intentionalClose && state.enabled) {
       setStatus("error", state.error || "The local table connection closed.").finally(scheduleReconnect);
@@ -193,6 +214,7 @@ function connect() {
 
 const stop = async () => {
   intentionalClose = true;
+  endKeepAlive();
   if (retryTimer) clearTimeout(retryTimer);
   retryTimer = null;
   if (socket) socket.close();
@@ -216,6 +238,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     intentionalClose = true;
+    endKeepAlive();
     if (socket) socket.close();
     socket = null;
     state = { ...state, enabled: true, code, cursor: "", ledger: emptyLedger(), status: "connecting", error: "", delivered: 0 };

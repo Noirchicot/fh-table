@@ -8,6 +8,8 @@ import {
   escapeHtml,
   normalizeLedger,
   planEvent,
+  KEEPALIVE_MS,
+  startWebSocketKeepAlive,
 } from "../extension/bridge-core.mjs";
 
 const event = (overrides = {}) => ({
@@ -94,4 +96,29 @@ test("stored ledger state is bounded and normalized", () => {
   const ledger = normalizeLedger({ seenIds: Array.from({ length: 1000 }, (_, i) => `e${i}`), rolls: { r: { rev: "2", total: "19", title: "Hunting" } } });
   assert.equal(ledger.seenIds.length, 800);
   assert.deepEqual(ledger.rolls.r, { rev: 2, total: 19, title: "Hunting", eventId: "" });
+});
+
+test("the extension keeps its Manifest V3 worker alive with an application WebSocket message", () => {
+  const sent = [];
+  let tick;
+  let cleared = null;
+  const socket = { readyState: 1, send: (message) => sent.push(message) };
+  const stop = startWebSocketKeepAlive(() => socket, {
+    setIntervalFn(callback, ms) {
+      assert.equal(ms, KEEPALIVE_MS);
+      tick = callback;
+      return 17;
+    },
+    clearIntervalFn(id) {
+      cleared = id;
+    },
+  });
+
+  tick();
+  assert.deepEqual(sent, ["keepalive"]);
+  socket.readyState = 3;
+  tick();
+  assert.deepEqual(sent, ["keepalive"]);
+  stop();
+  assert.equal(cleared, 17);
 });
