@@ -104,9 +104,18 @@ export const sinceSlice = (buffer, since, limit) => {
 // real preflight (plan §12.3 / §12.9), not just a bare Allow-Origin.
 export const ADMIN_ORIGINS = ["https://noirchicot.github.io"];
 export const DEV_ORIGINS = [/^http:\/\/localhost:\d{2,5}$/, /^http:\/\/127\.0\.0\.1:\d{2,5}$/];
+// Package 12b connects from a Manifest V3 service worker on the DM's own
+// machine. Unpacked extensions do not have a stable id, so the loopback
+// server accepts Chrome's syntactically valid extension origins as a class.
+// The campaign code remains the membership gate and the socket still binds
+// only to 127.0.0.1; unrelated web origins remain refused.
+export const EXTENSION_ORIGINS = [/^chrome-extension:\/\/[a-p]{32}$/];
 
 export const isAllowedOrigin = (origin) =>
-  !!origin && (ADMIN_ORIGINS.includes(origin) || DEV_ORIGINS.some((re) => re.test(origin)));
+  !!origin &&
+  (ADMIN_ORIGINS.includes(origin) ||
+    DEV_ORIGINS.some((re) => re.test(origin)) ||
+    EXTENSION_ORIGINS.some((re) => re.test(origin)));
 
 export const timingSafeEqual = (a, b) => {
   const bufA = crypto.createHash("sha256").update(String(a ?? "")).digest();
