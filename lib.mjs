@@ -68,6 +68,20 @@ export const safeFeedEvent = (body, campaign) => {
   };
 };
 
+// The AboveVTT bridge (extension/bridge-core.mjs) renders one game-log line
+// per actor and needs that actor's own portrait, not the DM's. This server
+// already holds it — `archive.get(pseudo).profile.snapshot.avatarUrl`, filled
+// by the DDB pull (plan §13.13) — so attaching it here costs no extra network
+// call. Pure and defensive: a missing or non-https URL (an unlinked character,
+// or a corrupt/partial archive entry) is left off entirely rather than
+// guessed, same "omit, never invent" discipline as safeFeedEvent above.
+export const attachActorAvatar = (event, avatarUrl) => {
+  if (!event?.actor) return event;
+  const url = typeof avatarUrl === "string" ? avatarUrl.trim() : "";
+  if (!/^https:\/\//i.test(url)) return event;
+  return { ...event, actor: { ...event.actor, avatarUrl: url } };
+};
+
 // The seq IS the timestamp (plan §11.4 / §12.3): 13-digit zero-padded epoch ms
 // plus a 4-char random tiebreaker, so lexicographic order matches chronological
 // order — kept identical to the cloud Worker's format so a dock's cursor code

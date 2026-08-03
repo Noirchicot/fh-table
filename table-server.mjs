@@ -45,6 +45,7 @@ import {
   defaultCharacterProfile,
   applyProfilePatch,
   applyBuildWrite,
+  attachActorAvatar,
 } from "./lib.mjs";
 import { encodeFrame, decodeFrames, handshakeResponse, OPCODE } from "./ws.mjs";
 
@@ -626,8 +627,13 @@ const server = http.createServer(async (req, res) => {
       } catch {
         return sendJson(res, req, { error: "invalid JSON" }, 400);
       }
-      const event = safeFeedEvent(body, CODE);
+      let event = safeFeedEvent(body, CODE);
       if (!event) return sendJson(res, req, { error: "invalid feed event" }, 400);
+      // Per-character portrait for the AboveVTT bridge (plan §13.13 archive is
+      // already in memory here — no extra fetch). Never blocks or fails the
+      // roll: an unlinked or not-yet-synced character simply has no avatar.
+      const archived = archive.get(cleanPseudo(event.actor.pseudo));
+      event = attachActorAvatar(event, archived?.profile?.snapshot?.avatarUrl);
       const seq = publish(event);
       return sendJson(res, req, { ok: true, seq, id: event.id });
     }
