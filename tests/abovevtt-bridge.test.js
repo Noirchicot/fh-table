@@ -65,6 +65,18 @@ test("an intent kind other than check gets no rollType/rollTitle/result — prin
   assert.equal("rollType" in plan, false);
 });
 
+test("an Initiative check never carries the rollTitle that routes into AboveVTT's initiative tracker", () => {
+  // rollTitle "initiative" is a route, not a label (handle_injected_data) —
+  // FHPC's sheet has a quick-roll named exactly "Initiative", so an unguarded
+  // title would silently push ordinary initiative checks into a tracker
+  // integration never verified live.
+  const fields = injectionFields(event({ intent: { kind: "check", check: "Initiative", ability: "DEX", total: 17 } }));
+  assert.equal(fields.rollType, "skill");
+  assert.notEqual(fields.rollTitle.trim().toLowerCase(), "initiative");
+  assert.match(fields.rollTitle, /^Initiative /);
+  assert.equal(fields.result, 17);
+});
+
 test("the same event id is never delivered twice", () => {
   const first = planEvent(emptyLedger(), event());
   const duplicate = planEvent(first.nextLedger, event());

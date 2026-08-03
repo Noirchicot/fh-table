@@ -150,10 +150,19 @@ export const injectionFields = (event) => {
   const fields = { whisper: "", sendTo: false, player, img };
   const intent = event?.intent;
   if (!intent || intent.kind !== "check") return fields;
+  // rollTitle "initiative" is a ROUTE, not a label: AboveVTT's
+  // handle_injected_data sends such a roll into its initiative tracker (vault
+  // note, Azmoria 2026-08-03). FHPC's sheet has a quick-roll literally named
+  // "Initiative", so without this guard an ordinary initiative check would be
+  // silently routed into a tracker integration nobody has verified live.
+  // Deliberate routing can lift this guard later — behind a live check, not an
+  // accident of naming.
+  let rollTitle = text(intent.check, "Check");
+  if (rollTitle.trim().toLowerCase() === "initiative") rollTitle = "Initiative roll";
   return {
     ...fields,
     rollType: CHECK_ROLL_TYPE,
-    rollTitle: text(intent.check, "Check"),
+    rollTitle,
     result: number(intent.total),
   };
 };
