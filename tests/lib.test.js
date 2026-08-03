@@ -16,6 +16,7 @@ import {
   safeOpaque,
   applyProfilePatch,
   applyBuildWrite,
+  attachActorAvatar,
 } from "../lib.mjs";
 
 test("a valid roll survives with its actor and display intact", () => {
@@ -28,6 +29,19 @@ test("a valid roll survives with its actor and display intact", () => {
   assert.equal(event.actor.character, "Yedrivel");
   assert.equal(event.campaign, "FH2");
   assert.deepEqual(event.display, { title: "Hunting", total: 18 });
+});
+
+test("a character's own avatar is attached from the local archive cache, only when it is a real https URL", () => {
+  const event = { actor: { pseudo: "Sol", character: "Yedrivel" } };
+  assert.equal(
+    attachActorAvatar(event, "https://media.dndbeyond.com/yedrivel.png").actor.avatarUrl,
+    "https://media.dndbeyond.com/yedrivel.png",
+  );
+  assert.equal("avatarUrl" in attachActorAvatar(event, "").actor, false);
+  assert.equal("avatarUrl" in attachActorAvatar(event, undefined).actor, false);
+  assert.equal("avatarUrl" in attachActorAvatar(event, "http://insecure.example/x.png").actor, false);
+  assert.equal("avatarUrl" in attachActorAvatar(event, "javascript:alert(1)").actor, false);
+  assert.equal(attachActorAvatar({ actor: null }, "https://x/y.png").actor, null);
 });
 
 test("a roll without a display is rejected, a note without one is not", () => {

@@ -6,6 +6,7 @@ import {
   cleanCampaignCode,
   emptyLedger,
   escapeHtml,
+  injectionFields,
   normalizeLedger,
   planEvent,
   KEEPALIVE_MS,
@@ -32,6 +33,36 @@ test("a check becomes one resolved plain-text AboveVTT line", () => {
   assert.match(plan.message, /d20 20/);
   assert.match(plan.message, /CRITICAL SUCCESS/);
   assert.doesNotMatch(plan.message, /1d20\+|\/hit|\/save/);
+});
+
+test("a check delivers whisper/sendTo/rollType/rollTitle/result from intent, never from display", () => {
+  const plan = planEvent(emptyLedger(), event({ display: { title: "SOMETHING ELSE ENTIRELY", total: 999 } }));
+  assert.deepEqual(plan.inject, {
+    whisper: "",
+    sendTo: false,
+    player: "Yedrivel",
+    img: "",
+    rollType: "skill",
+    rollTitle: "Hunting",
+    result: 27,
+  });
+});
+
+test("the actor's own avatar becomes the injected portrait, not the DM's", () => {
+  const plan = planEvent(emptyLedger(), event({ actor: { pseudo: "Sol", character: "Yedrivel", avatarUrl: "https://media.dndbeyond.com/yedrivel.png" } }));
+  assert.equal(plan.inject.player, "Yedrivel");
+  assert.equal(plan.inject.img, "https://media.dndbeyond.com/yedrivel.png");
+});
+
+test("a non-https avatar is dropped rather than injected", () => {
+  const plan = planEvent(emptyLedger(), event({ actor: { pseudo: "Sol", character: "Yedrivel", avatarUrl: "javascript:alert(1)" } }));
+  assert.equal(plan.inject.img, "");
+});
+
+test("an intent kind other than check gets no rollType/rollTitle/result — printed only, never invented", () => {
+  const plan = injectionFields(event({ intent: { kind: "damage", amounts: [{ amount: 9, type: "fire" }] } }));
+  assert.deepEqual(plan, { whisper: "", sendTo: false, player: "Yedrivel", img: "" });
+  assert.equal("rollType" in plan, false);
 });
 
 test("the same event id is never delivered twice", () => {

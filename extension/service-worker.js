@@ -81,9 +81,15 @@ const injectMainWorld = async (payload) => {
   if (window.DM !== true) return { ok: false, error: "The open AboveVTT tab is not the DM table." };
   if (!window.MB.ws || window.MB.ws.readyState !== 1) return { ok: false, error: "AboveVTT is visible but its game connection is offline." };
   try {
+    // payload.inject carries whisper/sendTo/player/img always, and
+    // rollType/rollTitle/result when the event's intent supports them
+    // (extension/bridge-core.mjs injectionFields) — player/img fall back to
+    // "Fate's Hand" / no portrait only when the roll's actor was never
+    // resolved to a character (see fallback in injectionFields).
     await window.MB.inject_chat({
-      player: "Fate's Hand",
-      img: window.PLAYER_IMG || "",
+      ...payload.inject,
+      player: payload.inject?.player || "Fate's Hand",
+      img: payload.inject?.img || window.PLAYER_IMG || "",
       text: payload.html,
     });
     return { ok: true };
@@ -118,7 +124,7 @@ const deliverToAboveVtt = async (plan) => {
       target: { tabId: target.tabId },
       world: "MAIN",
       func: injectMainWorld,
-      args: [{ html: plan.html }],
+      args: [{ html: plan.html, inject: plan.inject }],
     });
     return result?.[0]?.result || { ok: false, error: "AboveVTT returned no delivery acknowledgement." };
   } catch (error) {

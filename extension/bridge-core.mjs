@@ -123,6 +123,41 @@ export const summarizeEvent = (event) => {
 
 export const chatHtml = (message) => `<span><b>FH</b> · ${escapeHtml(message)}</span>`;
 
+// The fields `window.MB.inject_chat` itself reads (verified against AboveVTT's
+// own MessageBroker.js, not guessed): `whisper`, `player`, `img`, `rollType`,
+// `rollTitle` and `result`. All five are populated from the semantic `intent`
+// layer and the actor's own portrait — never from `display`, which is a view
+// model of unparseable strings (see summarizeEvent above).
+//
+// `whisper: ""` is sent explicitly rather than left absent: AboveVTT's own
+// gate is `injected_data.whisper == window.PLAYER_NAME`, so an empty string
+// reliably reads as "not a whisper to anyone in particular" — i.e. everyone —
+// without depending on AboveVTT defaulting a missing key the same way.
+// `sendTo: false` is likewise sent explicitly rather than omitted.
+//
+// `rollType`/`rollTitle`/`result` are only ever set for `intent.kind ===
+// "check"` — the one shape FHPC actually produces today (plan §11.3). A
+// "damage" or "spell" intent's shape is frozen but unverified against live
+// AboveVTT rendering, so per the "omit rather than invent" rule this leaves
+// them off entirely; summarizeEvent's printed line still carries the numbers.
+const CHECK_ROLL_TYPE = "skill";
+
+export const injectionFields = (event) => {
+  const actor = event?.actor || {};
+  const player = text(actor.character || actor.pseudo, "Fate's Hand");
+  const avatarUrl = typeof actor.avatarUrl === "string" ? actor.avatarUrl : "";
+  const img = /^https:\/\//i.test(avatarUrl) ? avatarUrl : "";
+  const fields = { whisper: "", sendTo: false, player, img };
+  const intent = event?.intent;
+  if (!intent || intent.kind !== "check") return fields;
+  return {
+    ...fields,
+    rollType: CHECK_ROLL_TYPE,
+    rollTitle: text(intent.check, "Check"),
+    result: number(intent.total),
+  };
+};
+
 const appendSeen = (ledger, id) => {
   const ids = ledger.seenIds.filter((known) => known !== id);
   ids.push(id);
@@ -159,7 +194,7 @@ export const planEvent = (rawLedger, event) => {
       [key]: { rev, total: summary.total, title: summary.title, eventId: id },
     }),
   };
-  return { action: "deliver", revised, message, html: chatHtml(message), nextLedger };
+  return { action: "deliver", revised, message, html: chatHtml(message), inject: injectionFields(event), nextLedger };
 };
 
 export const cleanCampaignCode = (value) => {
